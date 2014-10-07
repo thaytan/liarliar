@@ -35,44 +35,35 @@ plugin_loader* plugin_loader::Instance(StatusPort *ptr)
 
 plugin_loader::plugin_loader()
 {
-	FILE *dl;   // handle to read directory
-  char *command_str = "ls ~/.liarliar/plugins/*.so";  // command string to get dynamic lib names
-  char in_buf[BUF_SIZE]; // input buffer for lib names
+	try {
+		// get names of all dynamic libraries in the "plugins" dir
+		Glib::Dir dir ("~/.liarliar/plugins");
 
-	//status_ptr = ptr;
-	// get names of all dynamic libraries in the "plugins" dir
-	dl = popen(command_str, "r");
-	if (!dl)
-	{
-		perror("popen");
-		exit(-1);
-	}
+		void *dlib;
 
-	void *dlib;
-
-	#ifdef _DEBUG
-	cout << "Loading Plugins:" << endl;
-	#endif
-
-	while (fgets(in_buf, BUF_SIZE, dl))
-	{
-		// trim the whitespace
-		char *ws = strpbrk(in_buf, " \t\n");
-		if (ws)
-			*ws = '\0';
-		
 		#ifdef _DEBUG
-		cout << in_buf << endl;
+		cout << "Loading Plugins:" << endl;
 		#endif
-		dlib = dlopen(in_buf, RTLD_NOW);
-		if(dlib == NULL)
-		{
-			cerr << dlerror() << endl;
-			exit(-1);
-		}
+		for (Glib::DirIterator f = dir.begin(); f != dir.end(); f++) {
+			if (!Glib::str_has_suffix (*f, ".so"))
+				continue; // Ignore non plugin files
 
-		// add the handle to the list
-		dl_list.insert(dl_list.end(), dlib);
+			#ifdef _DEBUG
+			cout << *f << endl;
+			#endif
+			dlib = dlopen((*f).c_str(), RTLD_NOW);
+			if(dlib == NULL)
+			{
+				cerr << dlerror() << endl;
+				exit(-1);
+			}
+
+			// add the handle to the list
+			dl_list.insert(dl_list.end(), dlib);
+		}
+	}
+	catch (Glib::FileError e) {
+		cout << "Plugin dir doesn't exist" << endl;
 	}
 
 	int i=0;
@@ -116,6 +107,9 @@ plugin* plugin_loader::execute(string name)
 	{
 		temp_ptr = factory[name]();
 	}
+
+	if (temp_ptr == NULL)
+		return NULL;
 
 	// provide the selected plugin with a pointer to the status window for GUI updates
 	temp_ptr->status_ptr = status_ptr;
