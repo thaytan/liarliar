@@ -18,15 +18,8 @@
 #include "thread.h"
 
 // static member callback function for gstreamer
-void Thread::cb_manipulate (GstElement *element, GstBuffer *data, Thread* thread_obj_ptr)
+void Thread::cb_manipulate (GstElement *element, GstBuffer *buffer, Thread* thread_obj_ptr)
 {
-  GstBuffer *buffer;
-
-  /* no events */
-  if (!GST_IS_BUFFER (data))
-    return;
-  buffer = GST_BUFFER (data);
-
 //  // =============================================================================
 //
 //  if (thread_obj_ptr->audio_props.not_listened_yet)
@@ -103,14 +96,19 @@ void Thread::cb_manipulate (GstElement *element, GstBuffer *data, Thread* thread
 	// calculate how many bytes are in each audio data element
 	unsigned int num_bytes =  (thread_obj_ptr->audio_props.bit_depth/8)*thread_obj_ptr->audio_props.channels;
   // get the number of elements in buffer
-	unsigned int buf_element_size = buffer->size / num_bytes;
+	gsize buf_size = gst_buffer_get_size (buffer);
+	unsigned int buf_element_size = buf_size / num_bytes;
 	// determine the size of the local buffer (data to be sent to the plugin)
 	unsigned int local_buf_size = ( ((thread_obj_ptr->audio_props.rate/2) / buf_element_size) * buf_element_size ) + ( ((thread_obj_ptr->audio_props.rate/2) % buf_element_size) ? buf_element_size : 0);
   // reserve the proper amount of space for the local audio buffer
 	(*(thread_obj_ptr->m_audio_buffer_vec)).reserve( local_buf_size );
+	GstMapInfo map;
+
+  if (!gst_buffer_map (buffer, &map, GST_MAP_READ))
+    return;
 
   //for (unsigned int i=0; i<buf_element_size; ++i)
-	for (unsigned int i=0;i<buffer->size;i+=num_bytes)
+	for (unsigned int i=0;i<buf_size;i+=num_bytes)
   {
     // Convert from two bytes of little endian to a decimal then to a double
     double data_val;
@@ -119,13 +117,13 @@ void Thread::cb_manipulate (GstElement *element, GstBuffer *data, Thread* thread
     {
       // Convert two bytes into one 16bit number & scale the range to be between -1 and 1
 			// for the GUI drawing routines
-		  gint16 *int_ptr = (gint16 *)(buffer->data+i);
+		  gint16 *int_ptr = (gint16 *)(map.data+i);
 		  data_val = (static_cast<double>(*int_ptr)) / 32768.0;    // scale to [-1,1]
     }
     else if (thread_obj_ptr->audio_props.bit_depth == 8)  // 8 bit unsigned audio data
 		{
 			// leave data in 8 bit format & convert to signed + scale range to be [-1,1]
-      data_val = (static_cast<double>(*(buffer->data+i)) - 128.0) / 128.0;
+      data_val = (static_cast<double>(*(map.data+i)) - 128.0) / 128.0;
 		}
 		else
 		{
@@ -140,6 +138,8 @@ void Thread::cb_manipulate (GstElement *element, GstBuffer *data, Thread* thread
 		(*(thread_obj_ptr->m_audio_buffer_vec)).push_back(data_val);
   }
 
+  gst_buffer_unmap (buffer, &map);
+
   // collect enough raw data for 2hz resolution using FFT before calling plugin
 	if (  (*(thread_obj_ptr->m_audio_buffer_vec)).size() >=  thread_obj_ptr->audio_props.rate/2 ) {
 		// call plugin for processing & pass the local audio data
@@ -150,7 +150,7 @@ void Thread::cb_manipulate (GstElement *element, GstBuffer *data, Thread* thread
 	}
 
   // update the GUI (audio signal portion only)
-	thread_obj_ptr->refresh_drawing( (buffer->size)/((thread_obj_ptr->audio_props.bit_depth/8)*thread_obj_ptr->audio_props.channels));
+	thread_obj_ptr->refresh_drawing( (buf_size)/((thread_obj_ptr->audio_props.bit_depth/8)*thread_obj_ptr->audio_props.channels));
 
 	#ifndef NDEBUG
 	if (!thread_obj_ptr->running)  {
@@ -164,7 +164,7 @@ ploader(p),
 object(obj),
 mic_input(false),
 running(false),
-audio_sink("esdsink")  // default audio is esd
+audio_sink("autoaudiosink")  // default audio is esd
 {
 	m_audio_buffer_vec = new vector<double>;
 }
